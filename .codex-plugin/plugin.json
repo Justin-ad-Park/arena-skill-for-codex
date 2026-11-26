@@ -1,0 +1,13 @@
+{
+  "name": "arena",
+  "version": "1.0.0",
+  "description": "Run a tournament among independent Codex subagents with distinct strategies and blind judges.",
+  "repository": "https://github.com/Justin-ad-Park/arena-skill-for-codex",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Arena",
+    "shortDescription": "Compare answers from competing Codex subagents",
+    "category": "Developer Tools"
+  }
+}

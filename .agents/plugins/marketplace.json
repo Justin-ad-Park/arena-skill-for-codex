@@ -1,0 +1,20 @@
+{
+  "name": "arena-for-codex",
+  "interface": {
+    "displayName": "Arena for Codex"
+  },
+  "plugins": [
+    {
+      "name": "arena",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
