@@ -19,6 +19,7 @@ own context gets compacted halfway through a run.
     python3 bracket.py status                        # alive and eliminated, per round
     python3 bracket.py winner                        # the survivor, what it beat, the attacks it survived
     python3 bracket.py report [--detail summary|full] [--save]
+    python3 bracket.py progress <spawn|attack|defend|selection> [--detail summary|full]
     python3 bracket.py card <agent_id>               # one competitor's strategy card
 
 Phases, in order: spawn, then per round attack, defend, judge; then final (only when
@@ -1241,6 +1242,93 @@ def _report_score(score):
     return "점수 없음" if score is None else _fmt(score) + "점"
 
 
+_PROGRESS_LABEL = {"spawn": "참가자별 초안", "attack": "공격", "defend": "방어", "selection": "선정"}
+
+
+def _report_match(directory, rnd, match, full, stages, completed_only=False):
+    mid, a, b = match["id"], match["a"], match["b"]
+    lines = []
+    for aid, opponent in ((a, b), (b, a)):
+        if "attack" in stages:
+            attack = _report_text(attack_out(directory, rnd, mid, aid))
+            if attack.strip() or not completed_only:
+                title = "`%s` → `%s`" % (aid, opponent)
+                if full:
+                    lines.extend(["#### 공격 " + title, "", _report_quote(attack), ""])
+                else:
+                    lines.append("- **공격** %s · %s" % (title, _report_entries(attack, _ATTACK_HEAD)))
+        if "defend" in stages:
+            defense = _report_text(defense_out(directory, rnd, mid, aid))
+            revised = _report_text(revised_out(directory, rnd, mid, aid))
+            if (defense.strip() and revised.strip()) or not completed_only:
+                if full:
+                    lines.extend([
+                        "#### 방어 `%s`" % aid, "", _report_quote(defense), "",
+                        "#### 수정 답안 `%s`" % aid, "", _report_quote(revised), "",
+                    ])
+                else:
+                    lines.append("- **방어** `%s` · %s" % (aid, _report_entries(defense, _DEFENSE_HEAD)))
+    if "selection" in stages and match["winner"]:
+        scores = match.get("scores") or {}
+        lines.extend(["#### 선정", ""] if full else ([""] if lines else []))
+        lines.append("- **선정** `%s` 진출 · `%s` %s / `%s` %s"
+                     % (match["winner"], a, _report_score(scores.get(a)), b, _report_score(scores.get(b))))
+        if match.get("reason"):
+            lines.append("- **판정 이유** %s" % _report_clip(match["reason"], None if full else 260))
+        if full:
+            lines.extend(["", "**심판 판정 원문**", "", _report_verdict(verdict_out(directory, rnd, mid))])
+    if not lines:
+        return []
+    return ["### `%s` · `%s` vs `%s`" % (mid, a, b), "", *lines, ""]
+
+
+def _report_drafts(state, agents, completed_only=False):
+    lines = []
+    for aid in agents:
+        draft = _report_text(spawn_out(state["dir"], aid))
+        if draft.strip() or not completed_only:
+            lines.extend(["### `%s`" % aid, "", _report_quote(draft), ""])
+    return lines
+
+
+def cmd_progress(args):
+    state = load_state(args)
+    phase = args.phase
+    if phase != "spawn" and args.agent:
+        raise ArenaError("--agent is only supported for spawn progress")
+    if phase == "spawn":
+        if args.round is not None:
+            raise ArenaError("--round does not apply to spawn progress")
+        agents = sorted({norm_agent(state, aid) for aid in args.agent} if args.agent else state["agents"])
+        title = _PROGRESS_LABEL[phase]
+        body = _report_drafts(state, agents, completed_only=True)
+        name = "spawn"
+    else:
+        rnd = args.round if args.round is not None else len(state["rounds"])
+        if not 1 <= rnd <= len(state["rounds"]):
+            raise ArenaError("round %d does not exist in this run" % rnd)
+        rd = state["rounds"][rnd - 1]
+        title = "%d라운드 · %s" % (rnd, _PROGRESS_LABEL[phase])
+        name = "r%d-%s" % (rnd, phase)
+        body = []
+        for match in rd["matches"]:
+            body.extend(_report_match(state["dir"], rnd, match, args.detail == "full",
+                                      (phase,), completed_only=True))
+        if phase == "selection" and rd["bye"] and all(match["winner"] for match in rd["matches"]):
+            body.extend(["부전승으로 진출한 참가자 `%s`" % rd["bye"], ""])
+    report = "\n".join(["## " + title, "", *(body or ["아직 공개할 완료 기록이 없습니다."])]).rstrip() + "\n"
+    if args.save:
+        if args.agent:
+            raise ArenaError("to save a spawn snapshot, omit --agent")
+        path = os.path.join(state["dir"], "progress-%s-%s.md" % (name, args.detail))
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(report)
+        print(path)
+    else:
+        sys.stdout.write(report)
+    return 0
+
+
 def render_report(state, detail):
     rep = winner_report(state)
     if rep is None:
@@ -1255,8 +1343,7 @@ def render_report(state, detail):
         "## 우승 답안", "", _report_quote(_report_text(rep["solution"])), "",
         "## 참가자별 초안", "",
     ]
-    for aid in sorted(state["agents"]):
-        lines.extend(["### `%s`" % aid, "", _report_quote(_report_text(spawn_out(d, aid))), ""])
+    lines.extend(_report_drafts(state, sorted(state["agents"])))
 
     for rd in state["rounds"]:
         rnd = rd["n"]
@@ -1264,32 +1351,7 @@ def render_report(state, detail):
         if rd["bye"]:
             lines.extend(["부전승으로 진출한 참가자 `%s`" % rd["bye"], ""])
         for match in rd["matches"]:
-            mid, a, b = match["id"], match["a"], match["b"]
-            scores = match.get("scores") or {}
-            lines.extend(["### `%s` · `%s` vs `%s`" % (mid, a, b), ""])
-            for aid, opponent in ((a, b), (b, a)):
-                attack = _report_text(attack_out(d, rnd, mid, aid))
-                defense = _report_text(defense_out(d, rnd, mid, aid))
-                if full:
-                    lines.extend([
-                        "#### 공격 `%s` → `%s`" % (aid, opponent), "", _report_quote(attack), "",
-                        "#### 방어 `%s`" % aid, "", _report_quote(defense), "",
-                        "#### 수정 답안 `%s`" % aid, "",
-                        _report_quote(_report_text(revised_out(d, rnd, mid, aid))), "",
-                    ])
-                else:
-                    lines.extend([
-                        "- **공격** `%s` → `%s` · %s" % (aid, opponent, _report_entries(attack, _ATTACK_HEAD)),
-                        "- **방어** `%s` · %s" % (aid, _report_entries(defense, _DEFENSE_HEAD)),
-                    ])
-            lines.extend(["#### 선정", ""] if full else [""])
-            lines.append("- **선정** `%s` 진출 · `%s` %s / `%s` %s"
-                         % (match["winner"], a, _report_score(scores.get(a)), b, _report_score(scores.get(b))))
-            if match.get("reason"):
-                lines.append("- **판정 이유** %s" % _report_clip(match["reason"], None if full else 260))
-            if full:
-                lines.extend(["", "**심판 판정 원문**", "", _report_verdict(verdict_out(d, rnd, mid))])
-            lines.append("")
+            lines.extend(_report_match(d, rnd, match, full, ("attack", "defend", "selection")))
 
     if state.get("has_baseline"):
         fin = rep["final"]
@@ -1408,6 +1470,14 @@ def build_parser():
                    help="brief match excerpts or the complete match record (default summary)")
     s.add_argument("--save", action="store_true", help="save Markdown in the run directory and print its path")
     s.set_defaults(func=cmd_report)
+
+    s = sub.add_parser("progress", parents=[common], help="show a completed stage while the tournament is running")
+    s.add_argument("phase", choices=tuple(_PROGRESS_LABEL))
+    s.add_argument("--round", type=int, help="round number (default: the latest round)")
+    s.add_argument("--agent", action="append", help="only show this competitor's draft (repeatable)")
+    s.add_argument("--detail", choices=("summary", "full"), default="summary")
+    s.add_argument("--save", action="store_true", help="save this stage as Markdown and print its path")
+    s.set_defaults(func=cmd_progress)
 
     s = sub.add_parser("card", parents=[common], help="one competitor's strategy card")
     s.add_argument("agent_id")
