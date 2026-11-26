@@ -6,6 +6,15 @@ Arena는 같은 문제를 여러 Codex 하위 에이전트에게 맡기고, 토�
 
 하위 에이전트 실행을 지원하는 Codex와 Python 3.8 이상이 필요합니다. 기존 Codex 로그인으로 실행되며 별도 API 키나 Python 패키지는 필요하지 않습니다.
 
+### Codex 앱에서 채팅으로 설치
+
+Codex 앱의 새 채팅에 아래 메시지를 붙여넣으면 설치와 2명 토너먼트 테스트를 한 번에 요청할 수 있습니다.
+
+```text
+https://github.com/Justin-ad-Park/arena-skill-for-codex 에서 Arena 플러그인을 설치해줘. 설치 후 아래 예제로 실제 토너먼트를 실행하고 우승 답안까지 확인해줘.
+$arena --agents 2 비 오는 날 준비물 세 가지를 제안해줘.
+```
+
 ### Codex 플러그인으로 설치
 
 ```sh
