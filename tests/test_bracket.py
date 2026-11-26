@@ -332,6 +332,31 @@ class FullPipelineWithFakeAgents(TempDir):
         self.assertEqual(rep["final"]["better"], state["final"]["X"])
         self.assertTrue(rep["attacks_survived"])
 
+        first_match = state["rounds"][0]["matches"][0]
+        attack = B.attack_out(d, 1, first_match["id"], first_match["a"])
+        marker = "Only the full report contains this third criticism."
+        write(attack, "ATTACK 1 [MAJOR] First concern\nProblem: It is too vague.\n"
+              "ATTACK 2 [MINOR] Second concern\n" + ("Long supporting detail. " * 15) +
+              "\nATTACK 3 [MINOR] " + marker + "\n")
+        summary = self.ok("report", "--dir", d)
+        full_path = self.ok("report", "--detail", "full", "--save", "--dir", d).strip()
+        full = read(full_path)
+        for report in (summary, full):
+            for aid in state["agents"]:
+                self.assertIn("Salt on the wind, from %s." % aid, report)
+            for round_number in range(1, 4):
+                self.assertIn("## %d라운드\n" % round_number, report)
+            self.assertIn("기존 답안과 비교", report)
+            self.assertIn("First concern", report)
+            self.assertIn("Made it longer.", report)
+        self.assertIn("외 1건", summary)
+        self.assertNotIn(marker, summary)
+        self.assertIn(marker, full)
+        self.assertIn("Long supporting detail. " * 15, full)
+        self.assertIn("Salt on the long wind, revised by", full)
+        self.assertIn(read(B.verdict_out(d, 1, first_match["id"])), full)
+        self.assertIn(read(B.final_out(d)), full)
+
     def test_spawn_briefs_share_one_task_and_differ_in_card(self):
         d = os.path.join(self.tmp, "default run")
         out = self.ok("init", "--seed", 4, "--task", self.TASK, "--dir", d)
