@@ -33,9 +33,9 @@ cp -R arena-skill-for-codex/skills/arena "$HOME/.agents/skills/"
 
 ```text
 $arena 이 테스트가 간헐적으로 실패하는 원인과 수정안을 찾아줘.
-$arena --agents 32 이 API의 페이지네이션 설계안을 비교해줘.
+$arena --agents 4 이 API의 페이지네이션 설계안을 비교해줘.
 $arena --quick 캐시 무효화 전략을 제안해줘.
-$arena --agents 64 --seed 7 --wave 4 읽기 전용 데이터 마이그레이션 계획을 검토해줘.
+$arena --agents 16 --seed 7 --wave 4 읽기 전용 데이터 마이그레이션 계획을 검토해줘.
 ```
 
 | 옵션 | 동작 |
