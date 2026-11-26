@@ -10,6 +10,7 @@ own context gets compacted halfway through a run.
     python3 bracket.py init --quick --task "..."     # 4 agents
     python3 bracket.py next                          # what to do now, and the exact command for it
     python3 bracket.py prompts <phase>               # write the sub-agent briefs, list the jobs left, in waves
+    python3 bracket.py worker <role> --handle <id>   # remember the native subagent assigned to a role
     python3 bracket.py check <phase>                 # which outputs are still missing
     python3 bracket.py pairings                      # this round's matches, including the bye
     python3 bracket.py collect                       # read every judge verdict and record the winners
@@ -637,6 +638,8 @@ def phase_jobs(state, phase):
                              "outputs": [verdict_out(d, n, m["id"])]})
     for j in jobs:
         j["prompt"] = prompt_path(d, j["round"], j["id"])
+        j["worker"] = "baseline-judge" if phase == "final" else j.get("agent", "judge")
+        j["handle"] = state.get("workers", {}).get(j["worker"])
     return jobs
 
 
@@ -785,7 +788,8 @@ def plan_rows(n, wave=DEFAULT_WAVE):
     rows = []
     for rnd, alive in enumerate(bracket_sizes(n)[:-1], start=1):
         m = alive // 2
-        waves = 2 * math.ceil(2 * m / wave) + math.ceil(m / wave)
+        # A single judge thread handles one match at a time.
+        waves = 2 * math.ceil(2 * m / wave) + m
         rows.append({"round": rnd, "alive": alive, "matches": m, "bye": alive % 2,
                      "calls": CALLS_PER_MATCH * m, "waves": waves})
     return rows
@@ -939,7 +943,8 @@ def cmd_next(args):
     if phase in PHASES:
         print("NEXT: %s. %d of %d job(s) to run." % (phase, len(left), len(jobs)))
         print("  1. %s" % _cmd(state["dir"], "prompts", phase))
-        print("  2. launch the jobs it lists, one wave of %d at a time" % state["wave"])
+        width = 1 if phase in ("judge", "final") else state["wave"]
+        print("  2. dispatch the jobs it lists, one wave of up to %d at a time" % width)
         print("  3. %s" % _cmd(state["dir"], "next"))
     elif phase == "collect":
         print("NEXT: collect. Every verdict for this step is on disk.")
@@ -955,25 +960,56 @@ def cmd_next(args):
 def cmd_prompts(args):
     state = load_state(args)
     jobs = write_prompts(state, args.phase)
+    left = missing_jobs(jobs)
+    w = 1 if args.phase in ("judge", "final") else state["wave"]
+    waves = [left[i:i + w] for i in range(0, len(left), w)]
+    if args.json:
+        print(json.dumps({"phase": args.phase, "waves": waves}, indent=1))
+        return 0
     if not jobs:
         print("nothing to run for %s right now. %s" % (args.phase, _cmd(state["dir"], "next")))
         return 0
-    left = missing_jobs(jobs)
-    w = state["wave"]
     rd = current_round(state)
     where = "round 0" if args.phase == "spawn" else ("final" if args.phase == "final" else "round %d" % rd["n"])
-    waves = [left[i:i + w] for i in range(0, len(left), w)]
     print("%s, %s: %d job(s), %d still to run, %d wave(s) of up to %d"
           % (where, args.phase, len(jobs), len(left), len(waves), w))
     for k, wave in enumerate(waves, start=1):
         print("wave %d" % k)
         for j in wave:
-            print("  %-26s %s" % (j["id"], j["prompt"]))
+            route = " (handle %s)" % j["handle"] if j["handle"] else " (unbound)"
+            print("  %-26s %s%s  %s" % (j["id"], j["worker"], route, j["prompt"]))
     if left:
         print("")
-        print("Spawn a fresh Codex subagent for each job with the listed brief as its only assignment.")
-        print("Wait for and close or archive completed agents before the next wave.")
+        print("Continue bound workers with the listed brief. Spawn only for an unbound role.")
+        print("Save new handles with worker <role> --handle <id>. Wait before assigning another job to that worker.")
+        print("Refresh this list after each wave so pending jobs use any newly saved handles.")
     print("then: %s" % _cmd(state["dir"], "next"))
+    return 0
+
+
+def cmd_worker(args):
+    state = load_state(args)
+    workers = state.get("workers", {})
+    if args.role is None:
+        if args.handle is not None or args.clear:
+            raise ArenaError("specify a worker role to change its binding")
+        print(json.dumps(workers, indent=1, sort_keys=True))
+        return 0
+    role = args.role if args.role in ("judge", "baseline-judge") else norm_agent(state, args.role)
+    if args.handle is not None:
+        handle = args.handle.strip()
+        if not handle or not handle.isprintable():
+            raise ArenaError("worker handle must be nonempty and printable")
+        if any(bound == handle and owner != role for owner, bound in workers.items()):
+            raise ArenaError("worker handle is already bound to another role")
+        workers[role] = handle
+    elif args.clear:
+        workers.pop(role, None)
+    else:
+        raise ArenaError("pass --handle or --clear to update a worker")
+    state["workers"] = workers
+    save_state(state)
+    print(json.dumps(workers, indent=1, sort_keys=True))
     return 0
 
 
@@ -1197,7 +1233,16 @@ def build_parser():
                           ("check", cmd_check, "list the jobs whose outputs are missing")):
         s = sub.add_parser(name, parents=[common], help=hlp)
         s.add_argument("phase", choices=PHASES)
+        if name == "prompts":
+            s.add_argument("--json", action="store_true")
         s.set_defaults(func=fn)
+
+    s = sub.add_parser("worker", parents=[common], help="list or update native subagent handles for this run")
+    s.add_argument("role", nargs="?", help="competitor ID, judge, or baseline-judge")
+    binding = s.add_mutually_exclusive_group()
+    binding.add_argument("--handle", help="bind this role to a native subagent handle")
+    binding.add_argument("--clear", action="store_true", help="forget a closed or unavailable handle")
+    s.set_defaults(func=cmd_worker)
 
     s = sub.add_parser("pairings", parents=[common], help="this round's matches, including the bye")
     s.add_argument("--json", action="store_true")

@@ -140,7 +140,7 @@ How to judge:
 3. Look for flaws the attackers missed, too.
 4. Score each criterion from 0 to 10 using the rubric's anchors. Set fatal to true only for a flaw you have verified that makes the solution wrong or unusable for the task.
 5. The winner is the higher weighted total (the weights are in the rubric). A fatal solution cannot beat one that is not fatal. On an exact tie, fewer standing attacks wins, then higher correctness.
-6. Judge the work, not the writing about the work. Length is not quality. Read only the listed Arena inputs. Do not inspect strategy cards, other job briefs, or tournament state.
+6. Judge the work, not the writing about the work. Length is not quality. Read only the listed Arena inputs. Ignore any earlier match and its verdict. Do not inspect strategy cards, other job briefs, or tournament state.
 7. Do not create, edit or delete any file except the verdict. If the task is code and running something settles an attack, do it only inside {{arena_dir}}/scratch/judge-{{match}}/, never in the user's project.
 
 Write this JSON, and nothing else, to {{out}}:

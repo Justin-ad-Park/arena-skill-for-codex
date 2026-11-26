@@ -194,9 +194,9 @@ class Dealer(unittest.TestCase):
 class Plan(unittest.TestCase):
     def test_numbers(self):
         for options, expected in (
-            ([], (8, 3, 43, 13)),
-            (["--quick"], (4, 2, 19, 7)),
-            (["--agents", "64"], (64, 6, 379, 97)),
+            ([], (8, 3, 43, 17)),
+            (["--quick"], (4, 2, 19, 8)),
+            (["--agents", "64"], (64, 6, 379, 143)),
         ):
             with self.subTest(options=options):
                 result = cli("plan", "--json", *options)
@@ -313,6 +313,8 @@ class FullPipelineWithFakeAgents(TempDir):
                     self.assertIn("NOT satisfied", brief)
                 if phase == "judge":
                     self.assertNotIn("Reasoning mode", brief, "judges never see the cards")
+                if phase == "final":
+                    self.assertEqual(j["worker"], "baseline-judge")
             self.fake_outputs(state, phase, jobs, rng)
             self.ok("check", phase, "--dir", d)
         self.assertEqual(seen[-1], "done")
@@ -358,6 +360,46 @@ class FullPipelineWithFakeAgents(TempDir):
         self.assertFalse(os.path.exists(path))
         self.assertTrue(os.path.exists(path + ".unreadable"))
 
+    def test_four_competitors_finish_using_five_worker_handles(self):
+        d = os.path.join(self.tmp, "limited")
+        self.ok("init", "--agents", 4, "--task", self.TASK, "--dir", d)
+        rng = random.Random(9)
+        handles = {}
+        dispatched = []
+
+        for _ in range(19):
+            out = self.ok("next", "--dir", d)
+            if out.startswith("champion:") and "\nDONE." in out:
+                break
+            phase = re.search(r"^NEXT: (\w+)", out, re.M).group(1)
+            if phase in ("collect", "advance"):
+                self.ok(phase, "--dir", d)
+                continue
+
+            listing = json.loads(self.ok("prompts", phase, "--json", "--dir", d))
+            wave = listing["waves"][0]
+            if phase == "judge":
+                self.assertEqual(len(wave), 1)
+            for job in wave:
+                role = job["worker"]
+                expected = job["agent"] if phase != "judge" else "judge"
+                self.assertEqual(role, expected)
+                self.assertEqual(job["handle"], handles.get(role))
+                if job["handle"] is None:
+                    self.assertIn(phase, ("spawn", "judge"))
+                    handle = "native-thread-%d" % len(handles)
+                    handles[role] = handle
+                    self.ok("worker", role, "--handle", handle, "--dir", d)
+                dispatched.append(job["id"])
+            self.fake_outputs(load(d), phase, wave, rng)
+        else:
+            self.fail("the bracket did not finish")
+
+        self.assertEqual(len(set(dispatched)), 19)
+        self.assertEqual(set(handles), {"a001", "a002", "a003", "a004", "judge"})
+        self.assertEqual(json.loads(self.ok("worker", "--dir", d)), handles)
+        self.assertEqual(json.loads(self.ok("winner", "--json", "--dir", d))["rounds"], 2)
+
 
 class Guards(TempDir):
     def test_init_refuses_to_overwrite_and_bad_sizes(self):
@@ -393,9 +435,20 @@ class Guards(TempDir):
     def test_prompt_reference_contains_all_templates(self):
         self.assertEqual(sorted(B.load_templates()), sorted(B.TEMPLATES))
 
+    def test_worker_binding_rejects_reusing_a_competitor_as_judge(self):
+        d = os.path.join(self.tmp, "roles")
+        self.ok("init", "--agents", 2, "--task", "t", "--dir", d)
+        self.ok("worker", "a001", "--handle", "thread-1", "--dir", d)
+        result = cli("worker", "judge", "--handle", "thread-1", "--dir", d)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(self.ok("worker", "--dir", d)), {"a001": "thread-1"})
+        self.ok("worker", "a001", "--clear", "--dir", d)
+        jobs = json.loads(self.ok("prompts", "spawn", "--json", "--dir", d))["waves"][0]
+        self.assertIsNone(jobs[0]["handle"])
+
     def test_no_em_dashes_anywhere(self):
         for root, dirs, files in os.walk(REPO):
-            dirs[:] = [x for x in dirs if x not in (".git", "__pycache__")]
+            dirs[:] = [x for x in dirs if x not in (".git", ".arena", "__pycache__")]
             for name in files:
                 path = os.path.join(root, name)
                 with open(path, encoding="utf-8", errors="ignore") as fh:
